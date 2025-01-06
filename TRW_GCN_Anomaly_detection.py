@@ -20,23 +20,44 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import precision_score, recall_score, f1_score
 
 # Load graph
-graph = pickle.load(open('./data/eth_latest_100_block.pickle', 'rb'))
+graph = pickle.load(open('data/eth_latest_100_block_20240506.pickle', 'rb'))
 # Modify the node features to include some temporal features
 node_features = [
     (
-        float(node_data.get('outgoing_tx_count', 0)),
-        float(node_data.get('incoming_tx_count', 0)),
-        sum(node_data.get('outgoing_value_list', [])),
-        sum(node_data.get('incoming_value_list', [])),
-        float(node_data.get('activity_rate', 0)),  # Activity rate over a period (needs to be calculated and added to node_data)
-        float(node_data.get('change_in_activity', 0)),  # Change in activity over periods (needs to be calculated and added to node_data)
-        float(node_data.get('time_since_last', 0)),  # Time since the last transaction or activity (needs to be calculated and added to node_data)
+        #float(node_data.get('outgoing_tx_count', 0)),
+        #float(node_data.get('incoming_tx_count', 0)),
+        #sum(node_data.get('outgoing_value_list', [])),
+        #sum(node_data.get('incoming_value_list', [])),
+        #float(node_data.get('activity_rate', 0)),  # Activity rate over a period (needs to be calculated and added to node_data)
+        #float(node_data.get('change_in_activity', 0)),  # Change in activity over periods (needs to be calculated and added to node_data)
+        #float(node_data.get('time_since_last', 0)),  # Time since the last transaction or activity (needs to be calculated and added to node_data)
+        # Variance calculations
+        float(node_data.get('incoming_value_variance', 0)),
+        float(node_data.get('outgoing_value_variance', 0)),
+        # Calculate activity metrics
+        float(node_data.get('activity_rate', 0)),
+        # Activity rate over a period (needs to be calculated and added 3to node_data)
+        float(node_data.get('change_in_activity', 0)),
+        # Change in activity over periods (needs to be calculated and added to node_data)
+        float(node_data.get('time_since_last', 0)),
+        # Time since the last transaction or activity (needs to be calculated and added to node_data)
+        # Calculate total transaction volume
+        float(node_data.get('tx_volume', 0)),
+        # Identify addresses with frequent and large transfers
+        float(node_data.get('frequent_large_transfers', 0)),
+        # Additional features for MEV detection
+        float(node_data.get('gas_price', 0)),
+        float(node_data.get('token_swaps', 0)),
+        float(node_data.get('smart_contract_interactions', 0))
     )
     for node, node_data in graph.nodes(data=True)
 ]
 node_features = torch.tensor(node_features, dtype=torch.float32)
 
-adj_matrix = torch.tensor(nx.adjacency_matrix(graph, weight='weight').toarray(), dtype=torch.float32)
+# Convert the weighted adjacency matrix to a dense matrix
+adj_matrix_dense = nx.to_numpy_array(graph, weight='weight')
+# Convert the dense matrix to a PyTorch tensor
+adj_matrix = torch.tensor(adj_matrix_dense, dtype=torch.float32)
 data = Data(x=node_features, edge_index=adj_matrix.nonzero().t())
 
 # Split the data into train and test sets
@@ -61,8 +82,8 @@ class GCNModel(nn.Module):
         return x
 
 # Instantiate the GCN models
-model_with_trw = GCNModel(in_channels=7, hidden_channels=20, out_channels=7)
-model_without_trw = GCNModel(in_channels=7, hidden_channels=20, out_channels=7)
+model_with_trw = GCNModel(in_channels=10, hidden_channels=20, out_channels=10)
+model_without_trw = GCNModel(in_channels=10, hidden_channels=20, out_channels=10)
 
 # Define loss and optimizer for both instances
 optimizer_with_trw = torch.optim.Adam(model_with_trw.parameters(), lr=0.01)

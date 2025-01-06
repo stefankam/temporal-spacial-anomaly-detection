@@ -15,30 +15,41 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.model_selection import train_test_split
 
 # Load graph
-graph = pickle.load(open('./data/eth_latest_100_block.pickle', 'rb'))
-for u, v, data in graph.edges(data=True):
-    if 'type' in data:
-        del data['type']
-    if 'weight' in data:
-        del data['weight']
+graph = pickle.load(open('data/eth_block_18168871_18168890.pickle', 'rb'))
+#for u, v, data in graph.edges(data=True):
+   # if 'type' in data:
+    #    del data['type']
+   # if 'weight' in data:
+     #   del data['weight']
 
 
 # Node features
 node_features = [
     (
-        float(node_data.get('outgoing_tx_count', 0)),
-        float(node_data.get('incoming_tx_count', 0)),
-        sum(node_data.get('outgoing_value_list', [])),
-        sum(node_data.get('incoming_value_list', [])),
-        float(node_data.get('activity_rate', 0)),  # Activity rate over a period (needs to be calculated and added to node_data)
-        float(node_data.get('change_in_activity', 0)),  # Change in activity over periods (needs to be calculated and added to node_data)
-        float(node_data.get('time_since_last', 0)),  # Time since the last transaction or activity (needs to be calculated and added to node_data)
+        # Variance calculations
+        float(node_data.get('incoming_value_variance', 0)),
+        float(node_data.get('outgoing_value_variance', 0)),
+        # Calculate activity metrics
+        #float(node_data.get('activity_rate', 0)),# Activity rate over a period (needs to be calculated and added 3to node_data)
+        #float(node_data.get('change_in_activity', 0)),# Change in activity over periods (needs to be calculated and added to node_data)
+        #float(node_data.get('time_since_last', 0)),# Time since the last transaction or activity (needs to be calculated and added to node_data)
+        # Calculate total transaction volume
+        float(node_data.get('tx_volume', 0)),
+        # Identify addresses with frequent and large transfers
+        float(node_data.get('frequent_large_transfers', 0)),
+        # Additional features for MEV detection
+        float(node_data.get('gas_price', 0)),
+        float(node_data.get('token_swaps', 0)),
+        float(node_data.get('smart_contract_interactions', 0))
     )
     for node, node_data in graph.nodes(data=True)
 ]
 node_features = torch.tensor(node_features, dtype=torch.float32)
 
-adj_matrix = torch.tensor(nx.adjacency_matrix(graph, weight='weight').toarray(), dtype=torch.float32)
+# Convert the weighted adjacency matrix to a dense matrix
+adj_matrix_dense = nx.to_numpy_array(graph, weight='weight')
+# Convert the dense matrix to a PyTorch tensor
+adj_matrix = torch.tensor(adj_matrix_dense, dtype=torch.float32)
 data = Data(x=node_features, edge_index=adj_matrix.nonzero().t())
 
 # Split data into training and test sets
@@ -148,6 +159,7 @@ embeddings = trained_model(data.x, data.edge_index).cpu().detach().numpy()
 # Compute anomaly scores
 def compute_anomaly_scores(embeddings, node_freqs_values):
     scores = []
+    wscores = []
     for idx, embedding in enumerate(embeddings):
         mean = np.mean(embedding)
         std = np.std(embedding)
@@ -161,8 +173,11 @@ anomaly_scores = compute_anomaly_scores(embeddings, list(node_freqs.values()))
 
 
 # Visualization of anomalous nodes
-def plot_anomalous_nodes(graph, scores, threshold=2.0):
+def plot_anomalous_nodes(graph, scores, threshold=4.0):
     anomalous_nodes = [node for idx, node in enumerate(graph.nodes()) if abs(scores[idx]) > threshold]
+    for idx, node in enumerate(graph.nodes()):
+        if abs(scores[idx]) > threshold:
+            print("score for ", node , " is  ", scores[idx])
 
     pos = nx.spring_layout(graph)
     plt.figure(figsize=(12, 12))
@@ -196,7 +211,7 @@ print(f"Anomalous nodes: {anomalous_nodes}")
 import numpy as np
 
 # List of threshold values to experiment with
-thresholds = [0.1, 0.5, 1.0, 1.5, 2.0]  # Adjust these threshold values as needed
+thresholds = [1.0, 1.5, 2.0]  # Adjust these threshold values as needed
 
 # Initialize lists to store precision, recall, and F1-score for each threshold
 precisions = []
