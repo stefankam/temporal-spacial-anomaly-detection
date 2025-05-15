@@ -61,7 +61,7 @@ adj_matrix = torch.tensor(adj_matrix_dense, dtype=torch.float32)
 data = Data(x=node_features, edge_index=adj_matrix.nonzero().t())
 
 # Split the data into train and test sets
-train_ratio = 0.5  # You can adjust this ratio as needed
+train_ratio = 0.8  # You can adjust this ratio as needed
 num_samples = len(node_features)
 num_train_samples = int(train_ratio * num_samples)
 
@@ -153,58 +153,6 @@ def train_subgraph(nodes, model, optimizer):
     return loss.item()
 
 
-# Train GCN using nodes sampled from TRWs or without sampling
-def train_and_get_anomalies(all_walks, sampling=True, model=None, optimizer=None):
-
-    if sampling:  # Train GCN using nodes sampled from TRWs
-        for epoch in range(10):
-            random.shuffle(all_walks)
-            for i in range(0, len(all_walks), walk_length):
-                batch_nodes = all_walks[i: i + walk_length]
-                train_subgraph(batch_nodes, model, optimizer)
-    else:  # Train GCN using all nodes
-        for epoch in range(10):
-            batch_nodes = list(graph.nodes())
-            train_subgraph(batch_nodes, model, optimizer)
-
-    # Obtain GCN embeddings
-    embeddings = model(data.x, data.edge_index).cpu().detach().numpy()
-    embeddings[np.isnan(embeddings)] = 0
-
-    # Anomaly detection using dbscan
-    dbscan = DBSCAN(eps=0.5, min_samples=5).fit(embeddings)
-    labels = dbscan.labels_
-    gcn_detected_nodes_dbscan = set(np.where(labels == -1)[0])
-    #anomalous_nodes = np.where(labels == -1)[0]
-    #node_features = data.x.cpu().detach().numpy()  # Assuming your node features are stored in data.x
-    #analyze_anomalous_nodes(anomalous_nodes, model, node_features)
-
-    # Anomaly detection using One-Class SVM
-    ocsvm = OneClassSVM(kernel='rbf', nu=0.1, gamma=0.01).fit(embeddings)
-    predictions = ocsvm.predict(embeddings)
-    gcn_detected_nodes_svm = set(np.where(predictions == -1)[0])
-    #anomalous_nodes = np.where(labels == -1)[0]
-    #node_features = data.x.cpu().detach().numpy()  # Assuming your node features are stored in data.x
-    #analyze_anomalous_nodes(anomalous_nodes, model, node_features)
-
-    # Anomaly detection using Isolation Forest
-    iso_forest = IsolationForest(contamination=0.05).fit(embeddings)
-    predictions_iso_forest = iso_forest.predict(embeddings)
-    gcn_detected_nodes_isoforest = set(np.where(predictions_iso_forest == -1)[0])
-    #anomalous_nodes = np.where(labels == -1)[0]
-    #node_features = data.x.cpu().detach().numpy()  # Assuming your node features are stored in data.x
-    #analyze_anomalous_nodes(anomalous_nodes, model, node_features)
-
-    # Anomaly detection using LOF
-    lof = LocalOutlierFactor(n_neighbors=20, contamination=0.05)
-    predictions_lof = lof.fit_predict(embeddings)
-    gcn_detected_nodes_lof = set(np.where(predictions_lof == -1)[0])
-    anomalous_nodes = np.where(predictions_lof == -1)[0]
-    node_features = data.x.cpu().detach().numpy()  # Assuming your node features are stored in data.x
-    analyze_anomalous_nodes(anomalous_nodes, model, node_features)
-
-    return gcn_detected_nodes_dbscan, gcn_detected_nodes_svm, gcn_detected_nodes_isoforest, gcn_detected_nodes_lof
-
 
 def analyze_anomalous_nodes(anomalous_nodes, model, node_features):
     # Extract node features of anomalous nodes
@@ -244,119 +192,160 @@ def analyze_anomalous_nodes(anomalous_nodes, model, node_features):
             print(f"Mean Feature Values for Cluster {cluster}:", np.mean(anomalous_features[cluster_labels == cluster], axis=0))
 
 
-# Perform TRWs to sample nodes
-num_walks = 10
-walk_length = 100
-
-# Train GCN using nodes sampled from TRWs
-all_walks = multiple_temporal_random_walks(graph, num_walks, walk_length)
-
-# Get anomalies with TRWs sampling
-(gcn_detected_nodes_dbscan_with_trw,
- gcn_detected_nodes_svm_with_trw,
- gcn_detected_nodes_isoforest_with_trw,
- gcn_detected_nodes_lof_with_trw) = train_and_get_anomalies(all_walks, sampling=True, model=model_with_trw, optimizer=optimizer_with_trw)
-
-# Get anomalies without TRWs (using all nodes)
-(gcn_detected_nodes_dbscan_without_trw,
- gcn_detected_nodes_svm_without_trw,
- gcn_detected_nodes_isoforest_without_trw,
- gcn_detected_nodes_lof_without_trw) = train_and_get_anomalies(all_walks, sampling=False, model=model_without_trw, optimizer=optimizer_without_trw)
-
-# Visualization
-methods = ['GCN_DBSCAN_with_TRW', 'GCN_SVM_with_TRW', 'GCN_ISOFOREST_with_TRW', 'GCN_LOF_with_TRW',
-           'GCN_DBSCAN_without_TRW', 'GCN_SVM_without_TRW', 'GCN_ISOFOREST_without_TRW', 'GCN_LOF_without_TRW']
 
 
-node_counts = [
-    len(gcn_detected_nodes_dbscan_with_trw),
-    len(gcn_detected_nodes_svm_with_trw),
-    len(gcn_detected_nodes_isoforest_with_trw),
-    len(gcn_detected_nodes_lof_with_trw),
-    len(gcn_detected_nodes_dbscan_without_trw),
-    len(gcn_detected_nodes_svm_without_trw),
-    len(gcn_detected_nodes_isoforest_without_trw),
-    len(gcn_detected_nodes_lof_without_trw)
+def train_and_get_anomalies2(all_walks, dbscan_params, svm_params, iso_params, lof_params,
+    sampling=True, model=None, optimizer=None):
+
+    model.train()
+    if sampling:  # Train GCN using nodes sampled from TRWs
+        for epoch in range(10):
+            random.shuffle(all_walks)
+            for i in range(0, len(all_walks), walk_length):
+                batch_nodes = all_walks[i: i + walk_length]
+                train_subgraph(batch_nodes, model, optimizer)
+    else:  # Train GCN using all nodes
+        for epoch in range(10):
+            batch_nodes = list(graph.nodes())
+            train_subgraph(batch_nodes, model, optimizer)
+
+    # Obtain GCN embeddings
+    embeddings = model(data.x, data.edge_index).cpu().detach().numpy()
+    embeddings[np.isnan(embeddings)] = 0
+
+    gcn_detected_nodes_dbscan = set(np.where(DBSCAN(**dbscan_params).fit(embeddings).labels_ == -1)[0])
+    gcn_detected_nodes_svm = set(np.where(OneClassSVM(**svm_params).fit(embeddings).predict(embeddings) == -1)[0])
+    gcn_detected_nodes_isoforest = set(np.where(IsolationForest(**iso_params).fit(embeddings).predict(embeddings) == -1)[0])
+    gcn_detected_nodes_lof = set(np.where(LocalOutlierFactor(**lof_params).fit_predict(embeddings) == -1)[0])
+
+    lof = LocalOutlierFactor(n_neighbors=20, contamination=0.05)
+    predictions_lof = lof.fit_predict(embeddings)
+    anomalous_nodes = np.where(predictions_lof == -1)[0]
+    node_features = data.x.cpu().detach().numpy()  # Assuming your node features are stored in data.x
+    analyze_anomalous_nodes(anomalous_nodes, model, node_features)
+
+    return gcn_detected_nodes_dbscan, gcn_detected_nodes_svm, gcn_detected_nodes_isoforest, gcn_detected_nodes_lof
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import precision_score, recall_score, f1_score
+
+methods = [
+    'GCN_DBSCAN_with_TRW', 'GCN_SVM_with_TRW', 'GCN_ISOFOREST_with_TRW', 'GCN_LOF_with_TRW',
+    'GCN_DBSCAN_without_TRW', 'GCN_SVM_without_TRW', 'GCN_ISOFOREST_without_TRW', 'GCN_LOF_without_TRW'
 ]
 
+num_runs = 1
+node_counts_runs = []
+precision_runs = {method: [] for method in methods}
+recall_runs = {method: [] for method in methods}
+f1_runs = {method: [] for method in methods}
+
+for run in range(num_runs):
+    print(f"Run {run + 1}/{num_runs}")
+    # Set seed
+    seed = 42 + run
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+
+    # Instantiate the GCN models
+    model_with_trw = GCNModel(in_channels=10, hidden_channels=20, out_channels=10)
+    model_without_trw = GCNModel(in_channels=10, hidden_channels=20, out_channels=10)
+
+    # Define loss and optimizer for both instances
+    optimizer_with_trw = torch.optim.Adam(model_with_trw.parameters(), lr=0.01)
+    optimizer_without_trw = torch.optim.Adam(model_without_trw.parameters(), lr=0.01)
+    criterion = nn.MSELoss()
+
+    # Define varying parameters (example: randomize or use different presets)
+    eps = 0.4 + 0.05 * (run % 3)  # cycles through 0.4, 0.5, 0.6
+    contamination = 0.03 + 0.05 * (run % 4)  # cycles through 0.03, 0.04, ...
+    nu = 0.08 + 0.005 * (run % 3)
+    gamma = 0.005 + 0.001 * (run % 3)
+
+    # Perform TRWs to sample nodes
+    num_walks = 10
+    walk_length = 1000
+
+    # Generate walks
+    all_walks = multiple_temporal_random_walks(graph, num_walks, walk_length)
+
+
+    gcn_dbscan_trw, gcn_svm_trw, gcn_iso_trw, gcn_lof_trw = train_and_get_anomalies2(
+            all_walks,
+            sampling=True,
+            model=model_with_trw,
+            optimizer=optimizer_with_trw,
+            dbscan_params={"eps": eps, "min_samples": 5},
+            svm_params={"nu": nu, "gamma": gamma},
+            iso_params={"contamination": contamination},
+            lof_params={"n_neighbors": 20, "contamination": contamination}
+        )
+#     train_and_get_anomalies(
+#     all_walks, sampling=True, model=model_with_trw, optimizer=optimizer_with_trw))
+
+    gcn_dbscan_no_trw, gcn_svm_no_trw, gcn_iso_no_trw, gcn_lof_no_trw = train_and_get_anomalies2(
+            all_walks,
+            sampling=False,
+            model=model_without_trw,
+            optimizer=optimizer_without_trw,
+            dbscan_params={"eps": eps, "min_samples": 5},
+            svm_params={"nu": nu, "gamma": gamma},
+            iso_params={"contamination": contamination},
+            lof_params={"n_neighbors": 20, "contamination": contamination}
+        )
+
+    current_counts = [
+        len(gcn_dbscan_trw), len(gcn_svm_trw), len(gcn_iso_trw), len(gcn_lof_trw),
+        len(gcn_dbscan_no_trw), len(gcn_svm_no_trw), len(gcn_iso_no_trw), len(gcn_lof_no_trw)
+    ]
+    node_counts_runs.append(current_counts)
+
+    detected_dict = {
+        'GCN_DBSCAN_with_TRW': gcn_dbscan_trw,
+        'GCN_SVM_with_TRW': gcn_svm_trw,
+        'GCN_ISOFOREST_with_TRW': gcn_iso_trw,
+        'GCN_LOF_with_TRW': gcn_lof_trw,
+        'GCN_DBSCAN_without_TRW': gcn_dbscan_no_trw,
+        'GCN_SVM_without_TRW': gcn_svm_no_trw,
+        'GCN_ISOFOREST_without_TRW': gcn_iso_no_trw,
+        'GCN_LOF_without_TRW': gcn_lof_no_trw
+    }
+
+    true_labels = [1 if i in train_indices else 0 for i in range(len(node_features))]
+
+    for method, detected in detected_dict.items():
+        predicted_labels = [1 if i in detected else 0 for i in range(len(node_features))]
+        precision_runs[method].append(precision_score(true_labels, predicted_labels))
+        recall_runs[method].append(recall_score(true_labels, predicted_labels))
+        f1_runs[method].append(f1_score(true_labels, predicted_labels))
+
+# --- Averaged Metrics ---
+mean_node_counts = np.mean(node_counts_runs, axis=0)
+std_node_counts = np.std(node_counts_runs, axis=0)
+
+# --- Visualization ---
 plt.figure(figsize=(15, 7))
-bars = plt.bar(methods, node_counts, color=['green', 'purple', 'blue', 'red', 'yellow', 'cyan', 'orange', 'pink'])
+bars = plt.bar(methods, mean_node_counts, yerr=std_node_counts, capsize=5,
+               color=['green', 'purple', 'blue', 'red', 'yellow', 'cyan', 'orange', 'pink'])
 
-# Increase the font size for the bar labels
-for bar in bars:
-    yval = bar.get_height()
-    plt.text(bar.get_x() + bar.get_width()/2, yval + 5, round(yval, 2), ha='center', va='bottom', fontsize=12)  # Font size for numbers on bars
+for bar, mean in zip(bars, mean_node_counts):
+    plt.text(bar.get_x() + bar.get_width() / 2, mean + 2, round(mean, 2),
+             ha='center', va='bottom', fontsize=12)
 
-# Increase the font size for the title, x-axis labels, and y-axis labels
-plt.title('Comparison of Anomaly Detection using GCN with TRW and without TRW', fontsize=20)  # Increase title font size
-plt.xlabel('Methods', fontsize=16)  # Increase x-axis label font size
-plt.ylabel('Number of Nodes', fontsize=16)  # Increase y-axis label font size
-
-# Increase the font size for the x-tick labels (method names)
-plt.xticks(rotation=45, fontsize=16)  # Increase font size for x-tick labels
-
+plt.title(f'Average Anomaly Detection with and without TRW (over {num_runs} runs)', fontsize=20)
+plt.xlabel('Methods', fontsize=16)
+plt.ylabel('Average Number of Nodes Detected', fontsize=16)
+plt.xticks(rotation=45, fontsize=14)
 plt.tight_layout()
 plt.show()
 
-
-
-
-
-# Create a dictionary to store the detected nodes for each method without TRW
-detected_nodes_without_trw = {
-    'DBSCAN_without_TRW': gcn_detected_nodes_dbscan_without_trw,
-    'SVM_without_TRW': gcn_detected_nodes_svm_without_trw,
-    'IsolationForest_without_TRW': gcn_detected_nodes_isoforest_without_trw,
-    'LOF_without_TRW': gcn_detected_nodes_lof_without_trw,
-}
-
-# Calculate precision, recall, and F-score for each method without TRW
-scores_without_trw = {}
-
-for method, detected in detected_nodes_without_trw.items():
-    true_labels_without_trw = [1 if i in test_indices else 0 for i in range(len(node_features))]
-    detected_labels_without_trw = [1 if i in detected else 0 for i in range(len(node_features))]
-
-    precision_without_trw = precision_score(true_labels_without_trw, detected_labels_without_trw)
-    recall_without_trw = recall_score(true_labels_without_trw, detected_labels_without_trw)
-    f1_without_trw = f1_score(true_labels_without_trw, detected_labels_without_trw)
-
-    scores_without_trw[method] = {'Precision': precision_without_trw, 'Recall': recall_without_trw,
-                                  'F-score': f1_without_trw}
-
-# Print the precision, recall, and F-score for each method without TRW
-for method, metrics in scores_without_trw.items():
-    print(f'{method}:')
-    print(f'Precision: {metrics["Precision"]}')
-    print(f'Recall: {metrics["Recall"]}')
-    print(f'F-score: {metrics["F-score"]}')
-
-
-# Create a dictionary to store the detected nodes for each method with TRW
-detected_nodes_with_trw = {
-    'DBSCAN_with_TRW': gcn_detected_nodes_dbscan_with_trw,
-    'SVM_with_TRW': gcn_detected_nodes_svm_with_trw,
-    'IsolationForest_with_TRW': gcn_detected_nodes_isoforest_with_trw,
-    'LOF_with_TRW': gcn_detected_nodes_lof_with_trw,
-}
-
-# Calculate precision, recall, and F-score for each method with TRW
-scores_with_trw = {}
-
-for method, detected in detected_nodes_with_trw.items():
-    true_labels_with_trw = [1 if i in test_indices else 0 for i in range(len(node_features))]
-    detected_labels_with_trw = [1 if i in detected else 0 for i in range(len(node_features))]
-
-    precision_with_trw = precision_score(true_labels_with_trw, detected_labels_with_trw)
-    recall_with_trw = recall_score(true_labels_with_trw, detected_labels_with_trw)
-    f1_with_trw = f1_score(true_labels_with_trw, detected_labels_with_trw)
-
-    scores_with_trw[method] = {'Precision': precision_with_trw, 'Recall': recall_with_trw, 'F-score': f1_with_trw}
-
-# Print the precision, recall, and F-score for each method with TRW
-for method, metrics in scores_with_trw.items():
-    print(f'{method}:')
-    print(f'Precision: {metrics["Precision"]}')
-    print(f'Recall: {metrics["Recall"]}')
-    print(f'F-score: {metrics["F-score"]}')
+# --- Print Average Metrics ---
+for method in methods:
+    print(f"\n{method}:")
+    print(f"Precision: {np.mean(precision_runs[method]):.4f} ± {np.std(precision_runs[method]):.4f}")
+    print(f"Recall:    {np.mean(recall_runs[method]):.4f} ± {np.std(recall_runs[method]):.4f}")
+    print(f"F1-score:  {np.mean(f1_runs[method]):.4f} ± {np.std(f1_runs[method]):.4f}")
 

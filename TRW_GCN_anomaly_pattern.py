@@ -15,7 +15,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.model_selection import train_test_split
 
 # Load graph
-graph = pickle.load(open('data/eth_block_18168871_18168890.pickle', 'rb'))
+graph = pickle.load(open('data/eth_latest_100_block_20240506.pickle', 'rb'))
 #for u, v, data in graph.edges(data=True):
    # if 'type' in data:
     #    del data['type']
